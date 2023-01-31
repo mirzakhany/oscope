@@ -86,21 +86,21 @@ uint8_t get_trigger_status(float d0, float d1)
 static void plot_wave_thread(void)
 {
   uint8_t flag = 0;
-  uint8_t i = 0;
+  uint16_t i = 0;
   BaseType_t resp;
 
-  // display.setTextColor(TFT_YELLOW);
-  // display.drawPixel(80, 80);
-  // display.drawLine(10, 10, 40, 40);
+  Serial.println("start plot");
   // while (true)
   // {
   // resp = xQueueReceive(reader_status_queue, (void *)&flag, portMAX_DELAY);
   if (stop_sampling_flag == RESET)
   {
+    Serial.println("flag is reset");
     // gfx->draw16bitRGBBitmap(0, 0, (const uint16_t *)ScopeRaster, 480, 320);
-    // display.pushImage(0, 0, 480, 320, (const uint16_t *)ScopeRaster);
+    display.pushImage(0, 0, 480, 320, (const uint16_t *)ScopeRaster);
     for (i = 0; i <= WAVE_BUFFER_LENGTH - 2; i++)
     {
+      // Serial.printf("processing  %d\n", i);
       if ((i % 50 != 0) && ((i + 1) % 50 != 0) && (wave_buffer[i] != 100) && (wave_buffer[i + 1] != 100))
       {
 
@@ -108,7 +108,9 @@ static void plot_wave_thread(void)
                          wave_centor_x - (wave_width / 2) + i + 1, wave_centor_y - (wave_height / 2) + wave_buffer[i + 1] + 1, TFT_YELLOW);
       }
     }
+    Serial.println("draw lines is done");
   }
+  Serial.println("plot is done");
   // }
 }
 
@@ -118,6 +120,7 @@ static void read_wave_thread(void)
   uint8_t flag = 1;
   uint16_t sample_count = 0;
 
+  Serial.println("start read wave");
   float d0, d1;
   // while (true)
   //{
@@ -128,6 +131,7 @@ static void read_wave_thread(void)
     d0 = analogRead(0) / 4096.0 * 3.3;
   }
 
+  Serial.println("wait for trigger");
   if (current_sampling_mode != Auto)
   {
     do
@@ -137,6 +141,7 @@ static void read_wave_thread(void)
     } while (get_trigger_status(d0, d1) != SET);
   }
 
+  Serial.println("read signals");
   while (sample_count < WAVE_BUFFER_LENGTH)
   {
 
@@ -151,8 +156,10 @@ static void read_wave_thread(void)
     }
     sample_count++;
   }
+  Serial.println("read signals finished");
   if (current_sampling_mode == Single)
   {
+    Serial.println("plot single mode");
     // xQueueSend(reader_status_queue, (void *)&flag, sizeof(flag));
     plot_wave_thread();
     current_sampling_status = Stop;
@@ -160,6 +167,7 @@ static void read_wave_thread(void)
     // Setting_Inf_Update(0);
     // vTaskSuspend(NULL);
   }
+  Serial.println("plot default");
   plot_wave_thread();
   // xQueueSend(reader_status_queue, (void *)&flag, sizeof(flag));
   // }
@@ -167,6 +175,7 @@ static void read_wave_thread(void)
 
 void setup()
 {
+  Serial.begin(115200);
   display.init();
   display.setColorDepth(8);
   display.pushImage(0, 0, 480, 320, (const uint16_t *)ScopeRaster);
@@ -196,26 +205,6 @@ void setup()
   // delete the setup thread
   // vTaskDelete(NULL);
 }
-
-// void read_input()
-// {
-//   for (int i = 0; i < WAVE_BUFFER_LENGTH; i++)
-//   {
-//     wave_buffer[i] = analogRead(0);
-//     delayMicroseconds(600);
-//   }
-// }
-
-// void plot_wave()
-// {
-//   display.pushImage(0, 0, 480, 320, (const uint16_t *)ScopeRaster);
-
-//   for (int x = 0; x < WAVE_BUFFER_LENGTH; x++)
-//   {
-//     int y = map(wave_buffer[x], 0, 4095, 309, 9);
-//     display.drawPixel(x + 10, y, TFT_YELLOW);
-//   }
-// }
 
 void loop()
 {
