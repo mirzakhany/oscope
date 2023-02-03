@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include "glcd.h"
 // #include <Arduino_GFX_Library.h>
-#include "raster.h"
+// #include "raster.h"
+#include "rs.h"
 #include "esp_timer.h"
 
 #define GFX_BL DF_GFX_BL
@@ -61,6 +62,10 @@ int stop_sampling_flag = RESET;
 static BaseType_t reader_app = 0;
 static BaseType_t ui_app = 1;
 
+double current_wave_freq = 0.0;
+uint8_t wave_len_sum_count = 0;
+uint16_t wave_len = 0;
+
 // Wave reader queue
 // static QueueHandle_t reader_status_queue;
 
@@ -83,34 +88,98 @@ uint8_t get_trigger_status(float d0, float d1)
   return RESET;
 }
 
+void update_info()
+{
+  display.setTextSize(2);
+  display.setCursor(420, 45);
+  if (current_wave_freq < 1.0)
+  {
+    display.printf("%dHz", (uint16_t)(current_wave_freq * 1000));
+  }
+  else
+  {
+    display.printf("%.2fkHz", current_wave_freq);
+  }
+
+  display.setCursor(420, 128);
+  display.printf("%.1fV", current_trigger_value);
+  display.setCursor(420, 145);
+  display.print(trigger_mode[current_trigger_mode]);
+
+  display.setCursor(420, 210);
+  display.printf(sampling_mode[current_sampling_mode]);
+  display.setCursor(420, 245);
+  display.print(sampling_status[current_sampling_status]);
+}
+
+void calculate_freq(void)
+{
+  uint16_t sample_before_count = wave_centor_x, sample_after_count = wave_centor_x + 1;
+  uint8_t sum_count = 4;
+  float d0, d1;
+
+  d0 = wave_buffer[sample_before_count - 1] / 200.0 * 3.3;
+  d1 = wave_buffer[sample_before_count] / 200.0 * 3.3;
+  while ((get_trigger_status(d0, d1) == RESET) && (sample_before_count > 1))
+  {
+    sample_before_count--;
+    d0 = wave_buffer[sample_before_count - 1] / 200.0 * 3.3;
+    d1 = wave_buffer[sample_before_count] / 200.0 * 3.3;
+  }
+
+  d0 = wave_buffer[sample_after_count] / 200.0 * 3.3;
+  d1 = wave_buffer[sample_after_count + 1] / 200.0 * 3.3;
+  while ((get_trigger_status(d0, d1) == RESET) && (sample_after_count < (WAVE_BUFFER_LENGTH - 1)))
+  {
+    sample_after_count++;
+    d0 = wave_buffer[sample_after_count] / 200.0 * 3.3;
+    d1 = wave_buffer[sample_after_count + 1] / 200.0 * 3.3;
+  }
+
+  if (sample_after_count - sample_before_count + 2 < WAVE_BUFFER_LENGTH - 1)
+  {
+    wave_len += sample_after_count - sample_before_count + 1;
+    if (++wave_len_sum_count >= sum_count)
+    {
+      wave_len_sum_count = 0;
+      wave_len = wave_len >> 2;
+      current_wave_freq = 1 / (((float)wave_len) * ((double)current_time_per_div) / 50.0 / 1000.0);
+
+      update_info();
+      wave_len = 0;
+    }
+    else
+      return;
+  }
+  else
+    return;
+}
+
 static void plot_wave_thread(void)
 {
   uint8_t flag = 0;
   uint16_t i = 0;
   BaseType_t resp;
 
-  Serial.println("start plot");
   // while (true)
   // {
   // resp = xQueueReceive(reader_status_queue, (void *)&flag, portMAX_DELAY);
   if (stop_sampling_flag == RESET)
   {
-    Serial.println("flag is reset");
     // gfx->draw16bitRGBBitmap(0, 0, (const uint16_t *)ScopeRaster, 480, 320);
-    display.pushImage(0, 0, 480, 320, (const uint16_t *)ScopeRaster);
+    display.pushImage(0, 0, 480, 320, (const uint16_t *)rso);
+    // draw_raster();
     for (i = 0; i <= WAVE_BUFFER_LENGTH - 2; i++)
     {
       // Serial.printf("processing  %d\n", i);
       if ((i % 50 != 0) && ((i + 1) % 50 != 0) && (wave_buffer[i] != 100) && (wave_buffer[i + 1] != 100))
       {
-
         display.drawLine(wave_centor_x - (wave_width / 2) + i, wave_centor_y - (wave_height / 2) + wave_buffer[i] + 1,
                          wave_centor_x - (wave_width / 2) + i + 1, wave_centor_y - (wave_height / 2) + wave_buffer[i + 1] + 1, TFT_YELLOW);
       }
     }
-    Serial.println("draw lines is done");
+    calculate_freq();
   }
-  Serial.println("plot is done");
   // }
 }
 
@@ -178,7 +247,8 @@ void setup()
   Serial.begin(115200);
   display.init();
   display.setColorDepth(8);
-  display.pushImage(0, 0, 480, 320, (const uint16_t *)ScopeRaster);
+  // draw_raster();
+  display.pushImage(0, 0, 480, 320, (const uint16_t *)rso);
   display.setTextColor(TFT_YELLOW);
   // display.print("start again");
   //   display.setColorDepth(8);
