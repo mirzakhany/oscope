@@ -2,7 +2,7 @@
 #include "glcd.h"
 // #include <Arduino_GFX_Library.h>
 // #include "raster.h"
-#include "rs.h"
+#include "onrs.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -95,7 +95,7 @@ uint8_t get_trigger_status(float d0, float d1)
 
 void update_info()
 {
-  display.setTextSize(1.8);
+  display.fillRect(420, 45, 50, 15, TFT_BLACK);
   display.setCursor(420, 45);
   if (current_wave_freq < 1.0)
   {
@@ -173,7 +173,7 @@ static void plot_wave_thread(void *params)
     {
       // xSemaphoreTake(plot_sem, (TickType_t)10);
       // gfx->draw16bitRGBBitmap(0, 0, (const uint16_t *)ScopeRaster, 480, 320);
-      display.pushImage(0, 0, 480, 320, (const uint16_t *)rso);
+      display.pushImage(9, 9, 405, 305, (const uint16_t *)onrst);
       // draw_raster();
 
       for (i = 0; i <= WAVE_BUFFER_LENGTH - 2; i++)
@@ -189,7 +189,7 @@ static void plot_wave_thread(void *params)
       // xSemaphoreGive(plot_sem);
     }
     flag = 0;
-    vTaskDelay(100 / portTICK_PERIOD_MS);
+    vTaskDelay(500 / portTICK_PERIOD_MS);
   }
 }
 
@@ -263,8 +263,17 @@ void setup()
   display.init();
   display.setColorDepth(2);
   // draw_raster();
-  display.pushImage(0, 0, 480, 320, (const uint16_t *)rso);
+  display.pushImage(9, 9, 405, 305, (const uint16_t *)onrst);
+  display.setTextColor(TFT_BLUE);
+  display.setTextSize(1.8);
+  display.setCursor(420, 10);
+  display.print("Freq");
+  display.setCursor(420, 100);
+  display.print("Sapml");
+  display.setCursor(420, 190);
+  display.print("Trig");
   display.setTextColor(TFT_YELLOW);
+
   // display.print("start again");
   //  gfx->begin(SPI_FREQ);
   //  pinMode(GFX_BL, OUTPUT);

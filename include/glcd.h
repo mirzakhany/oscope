@@ -15,8 +15,8 @@ public:
             auto cfg = _bus_instance.config();
             cfg.spi_host = HSPI_HOST;
             cfg.spi_mode = 0;
-            cfg.freq_write = 70000000;
-            cfg.freq_read = 70000000;
+            cfg.freq_write = 40000000;
+            cfg.freq_read = 40000000;
             cfg.spi_3wire = true;
             cfg.use_lock = true;
             cfg.dma_channel = SPI_DMA_CH_AUTO;
