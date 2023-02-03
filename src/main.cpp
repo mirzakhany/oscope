@@ -4,6 +4,9 @@
 // #include "raster.h"
 #include "rs.h"
 #include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/semphr.h"
 
 #define GFX_BL DF_GFX_BL
 #define SPI_FREQ 60000000
@@ -67,7 +70,9 @@ uint8_t wave_len_sum_count = 0;
 uint16_t wave_len = 0;
 
 // Wave reader queue
-// static QueueHandle_t reader_status_queue;
+static QueueHandle_t reader_status_queue;
+static SemaphoreHandle_t adc_sem;
+static SemaphoreHandle_t plot_sem;
 
 uint8_t get_trigger_status(float d0, float d1)
 {
@@ -90,7 +95,7 @@ uint8_t get_trigger_status(float d0, float d1)
 
 void update_info()
 {
-  display.setTextSize(2);
+  display.setTextSize(1.8);
   display.setCursor(420, 45);
   if (current_wave_freq < 1.0)
   {
@@ -143,7 +148,7 @@ void calculate_freq(void)
     {
       wave_len_sum_count = 0;
       wave_len = wave_len >> 2;
-      current_wave_freq = 1 / (((float)wave_len) * ((double)current_time_per_div) / 50.0 / 1000.0);
+      current_wave_freq = 1 / (((float)wave_len) * ((double)current_time_per_div) / 9.8 / 1000.0);
 
       update_info();
       wave_len = 0;
@@ -155,128 +160,140 @@ void calculate_freq(void)
     return;
 }
 
-static void plot_wave_thread(void)
+static void plot_wave_thread(void *params)
 {
   uint8_t flag = 0;
   uint16_t i = 0;
   BaseType_t resp;
 
-  // while (true)
-  // {
-  // resp = xQueueReceive(reader_status_queue, (void *)&flag, portMAX_DELAY);
-  if (stop_sampling_flag == RESET)
+  while (true)
   {
-    // gfx->draw16bitRGBBitmap(0, 0, (const uint16_t *)ScopeRaster, 480, 320);
-    display.pushImage(0, 0, 480, 320, (const uint16_t *)rso);
-    // draw_raster();
-    for (i = 0; i <= WAVE_BUFFER_LENGTH - 2; i++)
+    resp = xQueueReceive(reader_status_queue, (void *)&flag, portMAX_DELAY);
+    if (resp == pdTRUE && flag == 1 && stop_sampling_flag == RESET)
     {
-      // Serial.printf("processing  %d\n", i);
-      if ((i % 50 != 0) && ((i + 1) % 50 != 0) && (wave_buffer[i] != 100) && (wave_buffer[i + 1] != 100))
+      // xSemaphoreTake(plot_sem, (TickType_t)10);
+      // gfx->draw16bitRGBBitmap(0, 0, (const uint16_t *)ScopeRaster, 480, 320);
+      display.pushImage(0, 0, 480, 320, (const uint16_t *)rso);
+      // draw_raster();
+
+      for (i = 0; i <= WAVE_BUFFER_LENGTH - 2; i++)
       {
-        display.drawLine(wave_centor_x - (wave_width / 2) + i, wave_centor_y - (wave_height / 2) + wave_buffer[i] + 1,
-                         wave_centor_x - (wave_width / 2) + i + 1, wave_centor_y - (wave_height / 2) + wave_buffer[i + 1] + 1, TFT_YELLOW);
+        // Serial.printf("processing  %d\n", i);
+        if ((i % 50 != 0) && ((i + 1) % 50 != 0) && (wave_buffer[i] != 100) && (wave_buffer[i + 1] != 100))
+        {
+          display.drawLine(wave_centor_x - (wave_width / 2) + i, wave_centor_y - (wave_height / 2) + wave_buffer[i] + 1,
+                           wave_centor_x - (wave_width / 2) + i + 1, wave_centor_y - (wave_height / 2) + wave_buffer[i + 1] + 1, TFT_YELLOW);
+        }
       }
+      calculate_freq();
+      // xSemaphoreGive(plot_sem);
     }
-    calculate_freq();
+    flag = 0;
+    vTaskDelay(100 / portTICK_PERIOD_MS);
   }
-  // }
 }
 
-static void read_wave_thread(void)
+static void read_wave_thread(void *params)
 {
   uint8_t pre_sample = 100;
   uint8_t flag = 1;
   uint16_t sample_count = 0;
 
-  Serial.println("start read wave");
+  // Serial.println("start read wave");
   float d0, d1;
-  // while (true)
-  //{
-  sample_count = 0;
-
-  while (pre_sample--)
+  while (true)
   {
-    d0 = analogRead(0) / 4096.0 * 3.3;
-  }
+    sample_count = 0;
 
-  Serial.println("wait for trigger");
-  if (current_sampling_mode != Auto)
-  {
-    do
+    while (pre_sample--)
     {
+      xSemaphoreTake(adc_sem, (TickType_t)10);
       d0 = analogRead(0) / 4096.0 * 3.3;
-      d1 = analogRead(0) / 4096.0 * 3.3;
-    } while (get_trigger_status(d0, d1) != SET);
-  }
-
-  Serial.println("read signals");
-  while (sample_count < WAVE_BUFFER_LENGTH)
-  {
-
-    wave_buffer[sample_count] = analogRead(0) * 198 / 4096;
-    if ((current_time_per_div / 50 - 7) != 0 && (current_time_per_div / 50 - 7) <= 1000)
-    {
-      delayMicroseconds(current_time_per_div / 50 - 7);
+      xSemaphoreGive(adc_sem);
     }
-    else
+
+    // Serial.println("wait for trigger");
+    if (current_sampling_mode != Auto)
     {
-      delayMicroseconds((current_time_per_div / 50) / 1000);
+      do
+      {
+        xSemaphoreTake(adc_sem, (TickType_t)10);
+        d0 = analogRead(0) / 4096.0 * 3.3;
+        d1 = analogRead(0) / 4096.0 * 3.3;
+        xSemaphoreGive(adc_sem);
+      } while (get_trigger_status(d0, d1) != SET);
     }
-    sample_count++;
+
+    // Serial.println("read signals");
+    while (sample_count < WAVE_BUFFER_LENGTH)
+    {
+      xSemaphoreTake(adc_sem, (TickType_t)10);
+      wave_buffer[sample_count] = analogRead(0) * 198 / 4096;
+      xSemaphoreGive(adc_sem);
+      if ((current_time_per_div / 50 - 7) != 0 && (current_time_per_div / 50 - 7) <= 1000)
+      {
+        delayMicroseconds(current_time_per_div / 50 - 7);
+      }
+      else
+      {
+        delayMicroseconds((current_time_per_div / 50) / 1000);
+      }
+      sample_count++;
+    }
+    // Serial.println("read signals finished");
+    if (current_sampling_mode == Single)
+    {
+      // Serial.println("plot single mode");
+      xQueueSend(reader_status_queue, (void *)&flag, sizeof(flag));
+      // plot_wave_thread();
+      current_sampling_status = Stop;
+      // CurSamplStatus = SamplStatus[SamplStatusNrb];
+      // Setting_Inf_Update(0);
+      vTaskSuspend(NULL);
+    }
+    // Serial.println("plot default");
+    //  plot_wave_thread();
+    xQueueSend(reader_status_queue, (void *)&flag, sizeof(flag));
   }
-  Serial.println("read signals finished");
-  if (current_sampling_mode == Single)
-  {
-    Serial.println("plot single mode");
-    // xQueueSend(reader_status_queue, (void *)&flag, sizeof(flag));
-    plot_wave_thread();
-    current_sampling_status = Stop;
-    // CurSamplStatus = SamplStatus[SamplStatusNrb];
-    // Setting_Inf_Update(0);
-    // vTaskSuspend(NULL);
-  }
-  Serial.println("plot default");
-  plot_wave_thread();
-  // xQueueSend(reader_status_queue, (void *)&flag, sizeof(flag));
-  // }
 }
 
 void setup()
 {
-  Serial.begin(115200);
+  // Serial.begin(115200);
   display.init();
-  display.setColorDepth(8);
+  display.setColorDepth(2);
   // draw_raster();
   display.pushImage(0, 0, 480, 320, (const uint16_t *)rso);
   display.setTextColor(TFT_YELLOW);
   // display.print("start again");
-  //   display.setColorDepth(8);
   //  gfx->begin(SPI_FREQ);
   //  pinMode(GFX_BL, OUTPUT);
   //  digitalWrite(GFX_BL, HIGH);
   //  gfx->draw16bitRGBBitmap(0, 0, (const uint16_t *)ScopeRaster, 480, 320);
+  vSemaphoreCreateBinary(adc_sem);
+  vSemaphoreCreateBinary(plot_sem);
+  reader_status_queue = xQueueCreate(5, sizeof(int));
+  // xTaskCreatePinnedToCore(read_wave_thread, "read_wave", 10000, NULL, 1, NULL, 0);
+  // xTaskCreatePinnedToCore(plot_wave_thread, "plot_wave", 15000, NULL, 1, NULL, 1);
+  BaseType_t resp;
+  resp = xTaskCreatePinnedToCore(read_wave_thread, "read_wave", 10000, NULL, 1, NULL, 0);
+  if (resp != pdPASS)
+  {
+    display.print(resp);
+  }
+  if (xTaskCreatePinnedToCore(plot_wave_thread, "plot_wave", 15000, NULL, 2, NULL, 1) != pdPASS)
+  {
+    display.print("create plot_wave task failed");
+  }
 
-  // reader_status_queue = xQueueCreate(5, sizeof(int));
-  // xTaskCreatePinnedToCore(read_wave_thread, "read_wave", 4000, NULL, 1, NULL, 0);
-  // xTaskCreatePinnedToCore(plot_wave_thread, "plot_wave", 8000, NULL, 1, NULL, 1);
-  //  BaseType_t resp;
-  //  resp = xTaskCreate(read_wave_thread, "read_wave", 512, NULL, 1, NULL);
-  //  if (resp != pdPASS)
-  //  {
-  //    display.print(resp);
-  //  }
-  //  if (xTaskCreate(plot_wave_thread, "plot_wave", 512, NULL, 1, NULL) != pdPASS)
-  //  {
-  //    display.print("create plot_wave task failed");
-  //  }
+  // vTaskStartScheduler();
 
   // reader_status_queue = xQueueCreate(1, sizeof(int));
-  // delete the setup thread
-  // vTaskDelete(NULL);
+  //  delete the setup thread
+  vTaskDelete(NULL);
 }
 
 void loop()
 {
-  read_wave_thread();
+  // read_wave_thread();
 }
